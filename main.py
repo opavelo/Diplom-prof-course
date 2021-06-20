@@ -6,8 +6,8 @@ import datetime
 from vk_api.longpoll import VkLongPoll, VkEventType
 
 
-token_id = '323c389abf1e049d92c44c6cc913546054500143e169dbe321b96fb6424fbc8aca0558559704486dbcd17'
-token_group = '76df2d147dd32d4bf77a300af7b086b189e50e46f3abbe43436b0992bc9981d560d41eb1b9ee951a52488'
+token_id = 'токен VK id'
+token_group = 'token_group'
 
 
 def write_msg(user_id, message):
