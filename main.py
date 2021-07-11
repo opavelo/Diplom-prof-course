@@ -1,17 +1,18 @@
 from random import randrange
-from pprint import pprint
 import requests
 import vk_api
 import datetime
+import sqlalchemy as sq
 from vk_api.longpoll import VkLongPoll, VkEventType
 
-
-token_id = 'токен VK id'
+token_id = 'token_id'
 token_group = 'token_group'
+vk = vk_api.VkApi(token=token_group)
+longpoll = VkLongPoll(vk)
 
 
 def write_msg(user_id, message):
-    vk.method('messages.send', {'user_id': user_id, 'message': message,  'random_id': randrange(10 ** 7),})
+    vk.method('messages.send', {'user_id': user_id, 'message': message, 'random_id': randrange(10 ** 7), })
 
 
 def write_img(user_id, message, photo_link):
@@ -73,9 +74,9 @@ def vk_link_loader(token_id, user_id):
     url = 'https://api.vk.com/method/photos.get'
     params = {'user_id': user_id,
               'access_token': token_id,
-               'v': '5.130',
+              'v': '5.130',
               'extended': 1,
-              'album_id': 'profile'       #wall, saved, profile
+              'album_id': 'profile'  # wall, saved, profile
               }
     response = requests.get(url, params=params)
     if response.status_code == 200:
@@ -84,14 +85,14 @@ def vk_link_loader(token_id, user_id):
         for i in range(photo_counter):
             photo_id = response.json()['response']['items'][i]['id']
             popularity = (response.json()['response']['items'][i]['likes']['count'] + \
-                                    response.json()['response']['items'][i]['likes']['user_likes'] +
-                                    response.json()['response']['items'][i]['comments']['count'])
+                          response.json()['response']['items'][i]['likes']['user_likes'] +
+                          response.json()['response']['items'][i]['comments']['count'])
             photo_owner_id = response.json()['response']['items'][i]['owner_id']
             photo_url = f'photo{photo_owner_id}_{photo_id}'
             photo_dict[photo_url] = popularity
     else:
         print('Ошибка:', response)
-    sorted_tuple = sorted(photo_dict.items(), key=lambda x: x[1], reverse = True)
+    sorted_tuple = sorted(photo_dict.items(), key=lambda x: x[1], reverse=True)
     photo_url = []
     photo_counter = len(sorted_tuple)
     if photo_counter > 3:
@@ -118,40 +119,74 @@ def black_list():
     return black_list
 
 
-vk = vk_api.VkApi(token=token_group)
-longpoll = VkLongPoll(vk)
+def black_list_SQL_recording(id):
+    DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
+    engine = sq.create_engine(DSN)
+    mydb = engine.raw_connection()
+    mycursor = mydb.cursor()
+    mycursor.execute('CREATE TABLE IF NOT EXISTS parts (vk_id integer NOT NULL)')
+    mydb.commit()
+    mycursor.execute(f'INSERT INTO parts VALUES({id})')
+    mydb.commit()
 
+
+def black_list_SQL_reading():
+    DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
+    engine = sq.create_engine(DSN)
+    mydb = engine.raw_connection()
+    mycursor = mydb.cursor()
+    mycursor.execute('SELECT vk_id FROM parts')
+    list = mycursor.fetchall()
+    black_list = []
+    for i in list:
+        black_list.append(i[0])
+    return black_list
+
+
+def logic(sex):
+    sex_r = 0
+    if sex == 2:
+        sex_r = 1
+    if sex == 1:
+        sex_r = 2
+    age_from = 18
+    age_to = age
+    return sex_r, age_from, age_to
+
+
+exit = False
 for event in longpoll.listen():
-    if event.type == VkEventType.MESSAGE_NEW:
-        if event.to_me:
-            request = event.text
-            age, sex, relation, city, user_name = vk_username(event.user_id)  # определяю город пользователя
-            write_msg(event.user_id, f"Привет {user_name}, {age} лет, программа для поиска второй половинки (только для"
-                                     f" совершеннолетних)")
-            sex_r = 0
-            if sex == 2:
-                sex_r = 1
-            if sex == 1:
-                sex_r = 2
-            age_from = 18
-            age_to = age
-            response = user_search(token_id, age_from, age_to, sex_r, [1, 6], city)
-            for people in response.json()['response']['items']:
-                if not people['is_closed'] and people['id'] not in black_list():
-                    url_list = vk_link_loader(token_id, people['id'])
-                    write_img(event.user_id, 'Это ' + str(people['first_name'] + ' ' + people['last_name'] + \
-                                                          '\nЕсли понравилась напиши +, если нет -'), url_list)
-                    for event in longpoll.listen():
-                        if event.type == VkEventType.MESSAGE_NEW:
-                            if event.to_me:
-                                request = event.text
-                                if request.lower() == "+":
-                                    write_msg(event.user_id, f"Напиши ей vk.com/id{people['id']}")
-                                    black_list_write(people['id'])
-                                    break
-                                else:
-                                    black_list_write(people['id'])
-                                    break
+    if exit:
+        break
+    else:
+        if event.type == VkEventType.MESSAGE_NEW:
+            if event.to_me:
+                age, sex, relation, city, user_name = vk_username(event.user_id)  # определяю город пользователя
+                write_msg(event.user_id, f"Привет {user_name}, {age} лет, программа для поиска второй половинки (только для"
+                                         f" совершеннолетних)")
+                sex_r, age_from, age_to = logic(sex)
+                response = user_search(token_id, age_from, age_to, sex_r, [1, 6], city)
+                for people in response.json()['response']['items']:
+                    if exit:
+                        break
+                    else:
+                        if not people['is_closed'] and people['id'] not in black_list_SQL_reading():
+                            url_list = vk_link_loader(token_id, people['id'])
+                            write_img(event.user_id, 'Это ' + str(people['first_name'] + ' ' + people['last_name'] + \
+                                                                  '\nЕсли понравилась напиши +, если нет - \n для выхода нажми q'), url_list)
 
+                            for event in longpoll.listen():
+                                if event.type == VkEventType.MESSAGE_NEW:
+                                    if event.to_me:
+                                        request = event.text
+                                        if request.lower() == "+":
+                                            write_msg(event.user_id, f"Напиши ей vk.com/id{people['id']}")
+                                            black_list_SQL_recording(people['id'])
+                                            break
+                                        elif request.lower() == "q":
+                                            exit = True
+                                            break
 
-
+                                        else:
+                                            black_list_SQL_recording(people['id'])
+                                            break
