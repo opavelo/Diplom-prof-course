@@ -2,14 +2,14 @@ from random import randrange
 import requests
 import vk_api
 import datetime
-import sqlalchemy as sq
+from database import *
 from vk_api.longpoll import VkLongPoll, VkEventType
 
-token_id = 'token_id'
-token_group = 'token_group'
+token_id = 'token'
+token_group = 'token'
+DSN = 'postgresql://postgres:password@localhost:5432/postgres'
 vk = vk_api.VkApi(token=token_group)
 longpoll = VkLongPoll(vk)
-
 
 def write_msg(user_id, message):
     vk.method('messages.send', {'user_id': user_id, 'message': message, 'random_id': randrange(10 ** 7), })
@@ -103,45 +103,28 @@ def vk_link_loader(token_id, user_id):
     return photo_url
 
 
-def black_list_write(id):
-    file = open("black_list.txt", "a")
-    file.write(str(id))
-    file.write('\n')
-    file.close()
-
-
-def black_list():
-    black_list = []
-    with open('black_list.txt', 'r') as file:
-        for line in file:
-            line = int(line.rstrip())
-            black_list.append(line)
-    return black_list
-
-
-def black_list_SQL_recording(id):
-    DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
-    engine = sq.create_engine(DSN)
-    mydb = engine.raw_connection()
-    mycursor = mydb.cursor()
-    mycursor.execute('CREATE TABLE IF NOT EXISTS parts (vk_id integer NOT NULL)')
-    mydb.commit()
-    mycursor.execute(f'INSERT INTO parts VALUES({id})')
-    mydb.commit()
-
-
-def black_list_SQL_reading():
-    DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
-    engine = sq.create_engine(DSN)
-    mydb = engine.raw_connection()
-    mycursor = mydb.cursor()
-    mycursor.execute('SELECT vk_id FROM parts')
-    list = mycursor.fetchall()
-    black_list = []
-    for i in list:
-        black_list.append(i[0])
-    return black_list
-
+# def black_list_SQL_recording(id, liked):
+#     DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
+#     engine = sq.create_engine(DSN)
+#     mydb = engine.raw_connection()
+#     mycursor = mydb.cursor()
+#     mycursor.execute(f'INSERT INTO parts (vk_id, liked) VALUES({id}, {liked})')
+#     mydb.commit()
+#
+#
+# def black_list_SQL_reading():
+#     DSN = 'postgresql://postgres:gsxr1000@localhost:5432/postgres'
+#     engine = sq.create_engine(DSN)
+#     mydb = engine.raw_connection()
+#     mycursor = mydb.cursor()
+#     mycursor.execute(f'CREATE TABLE IF NOT EXISTS parts (vk_id integer NOT NULL default 0, liked boolean NOT NULL default False)')
+#     mydb.commit()
+#     mycursor.execute('SELECT vk_id FROM parts')
+#     list = mycursor.fetchall()
+#     black_list = []
+#     for i in list:
+#         black_list.append(i[0])
+#     return black_list
 
 def logic(sex):
     sex_r = 0
@@ -154,39 +137,42 @@ def logic(sex):
     return sex_r, age_from, age_to
 
 
-exit = False
-for event in longpoll.listen():
-    if exit:
-        break
-    else:
-        if event.type == VkEventType.MESSAGE_NEW:
-            if event.to_me:
-                age, sex, relation, city, user_name = vk_username(event.user_id)  # определяю город пользователя
-                write_msg(event.user_id, f"Привет {user_name}, {age} лет, программа для поиска второй половинки (только для"
-                                         f" совершеннолетних)")
-                sex_r, age_from, age_to = logic(sex)
-                response = user_search(token_id, age_from, age_to, sex_r, [1, 6], city)
-                for people in response.json()['response']['items']:
-                    if exit:
-                        break
-                    else:
-                        if not people['is_closed'] and people['id'] not in black_list_SQL_reading():
-                            url_list = vk_link_loader(token_id, people['id'])
-                            write_img(event.user_id, 'Это ' + str(people['first_name'] + ' ' + people['last_name'] + \
-                                                                  '\nЕсли понравилась напиши +, если нет - \n для выхода нажми q'), url_list)
+if __name__ == '__main__':
+    exit = False
+    for event in longpoll.listen():
+        if exit:
+            break
+        else:
+            if event.type == VkEventType.MESSAGE_NEW:
+                if event.to_me:
+                    age, sex, relation, city, user_name = vk_username(event.user_id)  # определяю город пользователя
+                    write_msg(event.user_id,
+                              f"Привет {user_name}, {age} лет, программа для поиска второй половинки (только для"
+                              f" совершеннолетних)")
+                    sex_r, age_from, age_to = logic(sex)
+                    response = user_search(token_id, age_from, age_to, sex_r, [1, 6], city)
+                    for people in response.json()['response']['items']:
+                        if exit:
+                            break
+                        else:
+                            if not people['is_closed'] and people['id'] not in DB(DSN).black_list_SQL_reading():
+                                url_list = vk_link_loader(token_id, people['id'])
+                                write_img(event.user_id, 'Это ' + str(people['first_name'] + ' ' + people['last_name'] + \
+                                                                      '\nЕсли понравилась напиши +, если нет - \n для выхода нажми q'),
+                                          url_list)
 
-                            for event in longpoll.listen():
-                                if event.type == VkEventType.MESSAGE_NEW:
-                                    if event.to_me:
-                                        request = event.text
-                                        if request.lower() == "+":
-                                            write_msg(event.user_id, f"Напиши ей vk.com/id{people['id']}")
-                                            black_list_SQL_recording(people['id'])
-                                            break
-                                        elif request.lower() == "q":
-                                            exit = True
-                                            break
+                                for event in longpoll.listen():
+                                    if event.type == VkEventType.MESSAGE_NEW:
+                                        if event.to_me:
+                                            request = event.text
+                                            if request.lower() == "+":
+                                                write_msg(event.user_id, f"Напиши ей vk.com/id{people['id']}")
+                                                DB(DSN).black_list_SQL_recording(people['id'], True)
+                                                break
+                                            elif request.lower() == "q":
+                                                exit = True
+                                                break
 
-                                        else:
-                                            black_list_SQL_recording(people['id'])
-                                            break
+                                            else:
+                                                DB(DSN).black_list_SQL_recording(people['id'], False)
+                                                break
